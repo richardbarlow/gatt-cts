@@ -18,8 +18,9 @@ try:
 except ImportError:
     import glib as GLib
 
-import datetime
-import time
+from time_source import TimeSource, HostTimeSource
+
+from datetime import timedelta
 
 BLUEZ_SERVICE_NAME = 'org.bluez'
 GATT_MANAGER_IFACE = 'org.bluez.GattManager1'
@@ -272,12 +273,13 @@ class CurrentTimeService(Service):
 class CurrentTimeCharacteristic(Characteristic):
     CURRENT_TIME_UUID = '2a2B'
 
-    def __init__(self, bus, index, service, **kwargs):
+    def __init__(self, bus, index, service, time_source: TimeSource, **kwargs):
         Characteristic.__init__(
                 self, bus, index,
                 self.CURRENT_TIME_UUID,
                 ['read', 'notify'],
                 service)
+        self.time_source = time_source
         self.notifying = False
 
         with suppress(KeyError):
@@ -286,21 +288,19 @@ class CurrentTimeCharacteristic(Characteristic):
                 GLib.timeout_add(notify_period * 1000, self.notify_time)
 
     def current_time_bytes(self):
-        time.tzset()  # Reset the time conversion rules, so that the local time provided by now() is always correct
-
-        dt = datetime.datetime.now()
-        year = dt.year.to_bytes(2, 'little')
+        ct = self.time_source.current_time()
+        year = ct.year.to_bytes(2, 'little')
         value = list([dbus.Byte(b) for b in year])
-        value.append(dbus.Byte(dt.month))
-        value.append(dbus.Byte(dt.day))
-        value.append(dbus.Byte(dt.hour))
-        value.append(dbus.Byte(dt.minute))
-        value.append(dbus.Byte(dt.second))
-        value.append(dbus.Byte(dt.isoweekday()))
-        value.append(dbus.Byte(int((dt.microsecond * 1e-6) * 256)))
+        value.append(dbus.Byte(ct.month))
+        value.append(dbus.Byte(ct.day))
+        value.append(dbus.Byte(ct.hour))
+        value.append(dbus.Byte(ct.minute))
+        value.append(dbus.Byte(ct.second))
+        value.append(dbus.Byte(ct.isoweekday()))
+        value.append(dbus.Byte(int((ct.microsecond * 1e-6) * 256)))
         value.append(dbus.Byte(1))
 
-        self.logger.debug(f"CT: {dt.isoformat(timespec='microseconds')}")
+        self.logger.debug(f"CT: {ct.isoformat(timespec='microseconds')} ({' '.join(f'{b:02x}' for b in value)})")
 
         return value
 
@@ -339,20 +339,18 @@ class CurrentTimeCharacteristic(Characteristic):
 class LocalTimeInformationCharacteristic(Characteristic):
     LOCAL_TIME_INFORMATION_UUID = '2a0f'
 
-    def __init__(self, bus, index, service, **kwargs):
+    def __init__(self, bus, index, service, time_source: TimeSource, **kwargs):
         Characteristic.__init__(
                 self, bus, index,
                 self.LOCAL_TIME_INFORMATION_UUID,
                 ['read'],
                 service)
+        self.time_source = time_source
 
     def local_time_information_bytes(self):
-        time.tzset()  # Reset the time conversion rules, so that timezone and altzone are always correct
-
-        time_zone_offset = datetime.timedelta(seconds=-time.timezone)
-        dst_offset = datetime.timedelta(seconds=-time.altzone) - time_zone_offset
-        time_zone_offset_15min = int(time_zone_offset / datetime.timedelta(minutes=15))
-        dst_offset_15_min = int(dst_offset / datetime.timedelta(minutes=15))
+        time_zone_offset, dst_offset = self.time_source.current_local_time_info()
+        time_zone_offset_15min = int(time_zone_offset / timedelta(minutes=15))
+        dst_offset_15_min = int(dst_offset / timedelta(minutes=15))
 
         self.logger.debug(f"LTI: TZ offset = {time_zone_offset} ({time_zone_offset_15min:+d}); "
                           f"DST offset = {dst_offset} ({dst_offset_15_min:+d})")
@@ -366,7 +364,7 @@ class LocalTimeInformationCharacteristic(Characteristic):
 
 
 class Server(object):
-    def __init__(self, notify_period=None):
+    def __init__(self, time_source: TimeSource, notify_period=None):
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
 
         bus = dbus.SystemBus()
@@ -380,7 +378,7 @@ class Server(object):
                 bus.get_object(BLUEZ_SERVICE_NAME, adapter),
                 GATT_MANAGER_IFACE)
 
-        app = Application(bus, notify_period=notify_period)
+        app = Application(bus, time_source=time_source, notify_period=notify_period)
 
         self.mainloop = GLib.MainLoop()
 
@@ -430,4 +428,4 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
     logging.basicConfig(format='%(asctime)s | %(levelname)-7s | %(name)-30s | %(message)s', level=args.log_level)
-    Server(args.notify_period).run()
+    Server(HostTimeSource(), args.notify_period).run()
