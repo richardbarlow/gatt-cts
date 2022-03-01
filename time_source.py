@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
+import json
 import time
+from typing import Tuple
 
 
 class TimeSource(ABC):
@@ -12,7 +14,7 @@ class TimeSource(ABC):
         """
 
     @abstractmethod
-    def current_local_time_info(self) -> (timedelta, timedelta):
+    def current_local_time_info(self) -> Tuple[timedelta, timedelta]:
         """
         Return the timezone offset and the dst offset
         """
@@ -23,7 +25,7 @@ class HostTimeSource(TimeSource):
         time.tzset()  # Reset the time conversion rules, so that the local time provided by now() is always correct
         return datetime.now()
 
-    def current_local_time_info(self) -> (timedelta, timedelta):
+    def current_local_time_info(self) -> Tuple[timedelta, timedelta]:
         time.tzset()  # Reset the time conversion rules, so that timezone and altzone are always correct
         time_zone_offset = timedelta(seconds=-time.timezone)
 
@@ -38,10 +40,14 @@ class HostTimeSource(TimeSource):
 
 def main():
     host_time_source = HostTimeSource()
-    print(f"CT: {host_time_source.current_time().isoformat(timespec='microseconds')}")
     time_zone_offset, dst_offset = host_time_source.current_local_time_info()
-    print(f"TZ Offset: {time_zone_offset}")
-    print(f"DST Offset: {dst_offset}")
+
+    result = json.dumps({
+        "ct": host_time_source.current_time().isoformat(timespec='microseconds'),
+        "tz offset": str(time_zone_offset),
+        "dst offset": str(dst_offset)
+    })
+    print(result)
 
 
 if __name__ == '__main__':
