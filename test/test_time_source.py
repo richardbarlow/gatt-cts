@@ -12,8 +12,6 @@ from datetime import datetime, timedelta
 import json
 import subprocess
 
-from hypothesis.extra.pytz import timezones
-from hypothesis import given, strategies as st
 import pytest
 import pytz
 
